@@ -71,9 +71,10 @@ async def test():
     fixture_directory = tempfile.TemporaryDirectory()
     fixture_cert = Path(fixture_directory.name) / 'target.crt'
     fixture_key = Path(fixture_directory.name) / 'target.key'
+    fixture_gateway = docker('network', 'inspect', 'bridge', '--format', '{{(index .IPAM.Config 0).Gateway}}')
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
                     '-nodes', '-days', '1', '-subj', '/CN=host.docker.internal',
-                    '-addext', 'subjectAltName=DNS:host.docker.internal',
+                    '-addext', 'subjectAltName=DNS:host.docker.internal,IP:' + fixture_gateway,
                     '-keyout', str(fixture_key), '-out', str(fixture_cert)],
                    check=True, capture_output=True)
     fixture_tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -149,7 +150,7 @@ async def test():
             output, _ = await process.communicate()
             return process.returncode, output
 
-        https_target = f'https://host.docker.internal:{tls_port}/marker'
+        https_target = f'https://{gateway}:{tls_port}/marker'
         for uri in (info['http_proxy_uri'], info['https_proxy_uri']):
             for url in (target, https_target):
                 code, output = await curl_proxy(uri, url)
