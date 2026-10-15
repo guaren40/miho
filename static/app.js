@@ -29,7 +29,7 @@ async function load() {
   $('proxy-password').value = details.proxy_password;
   $('api-token').value = details.api_token;
   $('api-url').textContent = details.public_url + '/api';
-  $('subscription').value = details.subscription_url;
+  $('subscription').value = (details.subscription_urls || (details.subscription_url ? [details.subscription_url] : [])).join('\n');
   $('core-version').textContent = details.versions.mihomo.version;
   $('ui-version').textContent = details.versions.zashboard.version;
   $('status').textContent = details.status === 'ready' ? '● 内核运行中' : '○ 内核启动中';
@@ -73,7 +73,8 @@ $('show-secrets').onclick = () => {
 };
 $('url-form').addEventListener('submit', (event) => {
   event.preventDefault();
-  apply(event.submitter, () => api('/manage/config', { method: 'POST', body: JSON.stringify({ url: $('subscription').value }) }));
+  const urls = $('subscription').value.split(/\r?\n/).map(url => url.trim()).filter(Boolean);
+  apply(event.submitter, () => api('/manage/config', { method: 'POST', body: JSON.stringify({ urls }) }));
 });
 $('refresh').onclick = () => apply($('refresh'), () => api('/manage/refresh', { method: 'POST', body: '{}' }));
 $('yaml-form').addEventListener('submit', (event) => {

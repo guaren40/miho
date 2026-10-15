@@ -50,7 +50,14 @@ async def test():
     assert docker('run', '--rm', '--entrypoint', 'uname', IMAGE, '-m') == 'aarch64'
     fixture = web.Application()
     fixture.router.add_get('/marker', lambda _: web.Response(text=MARKER))
-    fixture.router.add_get('/subscription', lambda _: web.Response(text='proxy-groups:\n  - name: 测试策略\n    type: select\n    proxies: [DIRECT]\nrules:\n  - MATCH,测试策略\n'))
+    fixture.router.add_get('/subscription', lambda _: web.Response(text='proxies:\n  - {name: 同名节点, type: http, server: 127.0.0.1, port: 9}\nproxy-groups:\n  - name: 测试策略\n    type: select\n    proxies: [DIRECT]\nrules:\n  - MATCH,测试策略\n'))
+    second_source = {'fail': False}
+    async def provider_two(_):
+        if second_source['fail']:
+            return web.Response(text='proxies: [')
+        return web.Response(text=yaml.safe_dump({'proxy-providers': {'内置': {'type': 'inline', 'payload': [
+            {'name': '同名节点', 'type': 'http', 'server': '127.0.0.1', 'port': 9}]}}}, allow_unicode=True))
+    fixture.router.add_get('/subscription-two', provider_two)
     runner = web.AppRunner(fixture)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', 0)
@@ -118,6 +125,22 @@ async def test():
         assert (await session.patch(base + '/api/configs', json={'mixed-port': 0})).status == 400
         runtime = yaml.safe_load(docker('exec', NAME, 'cat', '/data/runtime.yaml'))
         assert runtime['authentication'] and runtime['skip-auth-prefixes'] == []
+        source_urls = [f'http://host.docker.internal:{fixture_port}/subscription',
+                       f'http://host.docker.internal:{fixture_port}/subscription-two']
+        response = await session.post(base + '/manage/config', json={'urls': source_urls})
+        assert response.status == 200, await response.text()
+        saved = await (await session.get(base + '/manage/config')).json()
+        groups = (await (await session.get(base + '/api/proxies')).json())['proxies']
+        assert '[提供商1] 同名节点' in groups['[提供商1]']['all']
+        assert '[提供商2/内置] 同名节点' in groups['[提供商2]']['all']
+        response = await session.post(base + '/manage/refresh', json={})
+        assert response.status == 200, await response.text()
+        second_source['fail'] = True
+        assert (await session.post(base + '/manage/refresh', json={})).status == 400
+        assert await (await session.get(base + '/manage/config')).json() == saved
+        assert (await (await session.get(base + '/manage/info')).json())['subscription_urls'] == source_urls
+        second_source['fail'] = False
+        print('Multiple YAML sources: node namespaces, inline providers, refresh and failure preservation passed.')
         docker('rm', '-f', NAME)
         base, _ = start('changed-env-must-not-reset-state')
         await ready(session, base)
@@ -131,6 +154,7 @@ async def test():
             else:
                 assert restored[key] == info[key]
         assert await (await session.get(base + '/manage/config')).json() == saved
+        assert restored['subscription_urls'] == source_urls
         print('Import validation, rejected-config recovery and volume persistence: passed.')
         # Browser verification on a reachable persistent container.
         Path('/tmp/miho-test-url').write_text(base)
@@ -150,7 +174,7 @@ async def test():
                 await page.screenshot(path='test-results/console.png', full_page=True)
                 frame = page.frame_locator('#dashboard-frame')
                 try:
-                    await frame.get_by_text('测试策略', exact=True).first.wait_for(timeout=60000)
+                    await frame.get_by_text('[提供商1]', exact=True).first.wait_for(timeout=60000)
                 except Exception:
                     await page.screenshot(path='test-results/console.png', full_page=True)
                     for child in page.frames:
@@ -160,13 +184,18 @@ async def test():
                     raise
                 await page.screenshot(path='test-results/console.png', full_page=True)
                 await page.locator('[data-tab="config"]').click()
+                assert (await page.locator('#subscription').input_value()).splitlines() == source_urls
+                async with page.expect_response(lambda response: response.url == base + '/manage/config' and response.request.method == 'POST') as applied:
+                    await page.locator('#url-form button[type="submit"]').click()
+                assert (await applied.value).status == 200
+                await page.locator('#url-form button[type="submit"]:not([disabled])').wait_for()
                 await page.locator('#yaml').fill('proxy-groups:\n  - name: 浏览器策略\n    type: select\n    proxies: [DIRECT]\nrules:\n  - MATCH,浏览器策略\n')
                 await page.locator('#yaml-form button').click()
                 await page.get_by_text('配置已生效', exact=True).wait_for(timeout=60000)
                 await page.locator('[data-tab="dashboard"]').click()
                 await frame.get_by_text('浏览器策略', exact=True).first.wait_for(timeout=60000)
                 await browser.close()
-                print('Browser: login, dashboard automatic connection and configuration import passed.')
+                print('Browser: login, dashboard automatic connection, multiple provider URLs and configuration import passed.')
     await runner.cleanup()
 
 

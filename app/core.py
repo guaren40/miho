@@ -126,7 +126,7 @@ class Core:
                 self.process.kill()
                 await self.process.wait()
 
-    async def apply(self, text, session, subscription_url=None):
+    async def apply(self, text, session, subscription_url=None, subscription_urls=None):
         async with self.lock:
             runtime = normalize(text, self.state.data)
             await self.validate(runtime)
@@ -141,8 +141,10 @@ class Core:
                 await self.launch(session)
                 raise ValueError('新配置启动失败，已恢复原配置')
             atomic_write(self.source, text)
-            if subscription_url is not None:
-                self.state.data['subscription_url'] = subscription_url
+            if subscription_urls is not None or subscription_url is not None:
+                urls = list(subscription_urls) if subscription_urls is not None else ([subscription_url] if subscription_url else [])
+                self.state.data['subscription_urls'] = urls
+                self.state.data['subscription_url'] = urls[0] if urls else ''
                 self.state.save()
 
     async def monitor(self, session):

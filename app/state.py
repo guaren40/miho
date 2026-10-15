@@ -36,7 +36,7 @@ class State:
                 'salt': salt, 'password_hash': self.hash_password(password, salt),
                 'session_key': secrets.token_hex(32), 'api_secret': secrets.token_urlsafe(32),
                 'proxy_user': 'miho', 'proxy_password': secrets.token_urlsafe(24),
-                'vless_uuid': str(uuid.uuid4()), 'subscription_url': '',
+                'vless_uuid': str(uuid.uuid4()), 'subscription_url': '', 'subscription_urls': [],
             }
             self.save()
             if generated:
@@ -44,6 +44,13 @@ class State:
                 print('Miho initial admin password: ' + password, flush=True)
             else:
                 print('Miho admin password initialized from environment.', flush=True)
+
+    @property
+    def subscription_urls(self):
+        if 'subscription_urls' in self.data:
+            return list(self.data['subscription_urls'])
+        url = self.data.get('subscription_url', '')
+        return [url] if url else []
 
     @staticmethod
     def hash_password(password, salt):

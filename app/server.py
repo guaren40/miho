@@ -12,6 +12,7 @@ from aiohttp import web
 import yaml
 from yarl import URL
 from .core import MAX_CONFIG
+from .subscriptions import load_subscriptions, parse_urls
 
 STATIC = Path(__file__).resolve().parent.parent / 'static'
 UI = Path(os.getenv('ZASHBOARD_DIR', '/opt/zashboard'))
@@ -149,6 +150,7 @@ def create_app(state, core):
         uri = f"vless://{node['uuid']}@{server}:{node['port']}?{query}#Miho"
         versions = json.loads((STATIC.parent / 'versions.json').read_text())
         return web.json_response({'versions': versions, 'subscription_url': state.data['subscription_url'],
+                                  'subscription_urls': state.subscription_urls,
                                   'public_url': public_url(request), 'vless_uri': uri,
                                   'proxy_user': state.data['proxy_user'], 'proxy_password': state.data['proxy_password'],
                                   'api_token': state.data['api_secret'], 'status': 'ready' if core.process and core.process.returncode is None else 'starting'})
@@ -177,18 +179,20 @@ def create_app(state, core):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError('请求需要 JSON 对象')
-        url = body.get('url', '').strip()
-        text = await download_subscription(url) if url else body.get('text', '')
+        urls = parse_urls(body.get('urls', body.get('url', '')))
+        if 'urls' in body and not urls:
+            raise ValueError('请至少填写一个提供商 URL')
+        text = await load_subscriptions(urls, download_subscription) if urls else body.get('text', '')
         if not isinstance(text, str):
             raise ValueError('配置必须是文本')
-        await core.apply(text, app['client'], subscription_url=url)
-        return web.json_response({'ok': True})
+        await core.apply(text, app['client'], subscription_urls=urls)
+        return web.json_response({'ok': True, 'sources': len(urls)})
 
     async def refresh(request):
-        url = state.data['subscription_url']
-        if not url:
+        urls = state.subscription_urls
+        if not urls:
             raise ValueError('尚未保存订阅地址')
-        await core.apply(await download_subscription(url), app['client'])
+        await core.apply(await load_subscriptions(urls, download_subscription), app['client'], subscription_urls=urls)
         return web.json_response({'ok': True})
 
     async def client_config(request):

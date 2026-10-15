@@ -58,14 +58,19 @@ class StateTests(unittest.TestCase):
 class FakeCore:
     process = type('Process', (), {'returncode': None})()
     text = ''
+    def __init__(self, state): self.state = state
     async def start(self, session): pass
     async def stop(self): pass
     async def monitor(self, session):
         import asyncio
         await asyncio.Event().wait()
     def source_text(self): return self.text
-    async def apply(self, text, session, subscription_url=None):
+    async def apply(self, text, session, subscription_url=None, subscription_urls=None):
         self.text = text
+        if subscription_urls is not None:
+            self.state.data['subscription_urls'] = list(subscription_urls)
+            self.state.data['subscription_url'] = subscription_urls[0] if subscription_urls else ''
+            self.state.save()
 
 
 class ServerTests(unittest.IsolatedAsyncioTestCase):
@@ -92,7 +97,8 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         upstream.router.add_get('/proxies/{name}', proxy_name)
         self.upstream = TestServer(upstream, port=9090)
         await self.upstream.start_server()
-        self.client = TestClient(TestServer(create_app(self.state, FakeCore())))
+        self.core = FakeCore(self.state)
+        self.client = TestClient(TestServer(create_app(self.state, self.core)))
         await self.client.start_server()
 
     async def asyncTearDown(self):
