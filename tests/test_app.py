@@ -43,6 +43,8 @@ class StateTests(unittest.TestCase):
         self.assertNotIn('external-controller-unix', config)
         self.assertNotIn('port', config)
         self.assertEqual(config['listeners'][0]['users'][0]['uuid'], 'test-uuid')
+        self.assertEqual(config['listeners'][0]['listen'], '127.0.0.1')
+        self.assertTrue(config['listeners'][0]['allow-insecure'])
         self.assertEqual(config['rules'], ['MATCH,节点选择'])
 
     def test_reject_non_yaml_subscription(self):

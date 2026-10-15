@@ -1,7 +1,7 @@
 import asyncio
 import copy
-import os
 from pathlib import Path
+import aiohttp
 import yaml
 from .state import atomic_write
 
@@ -32,7 +32,8 @@ def normalize(text, state):
         'external-controller-cors': {'allow-origins': [], 'allow-private-network': False},
         'listeners': [{'name': 'miho-ws', 'type': 'vless', 'listen': '127.0.0.1',
                        'port': 7891, 'users': [{'username': 'miho', 'uuid': state['vless_uuid']}],
-                       'ws-path': '/tunnel'}],
+                       # TLS terminates at Zeabur / the reverse proxy. This listener is loopback only.
+                       'allow-insecure': True, 'ws-path': '/tunnel'}],
     })
     profile = config.get('profile') or {}
     if not isinstance(profile, dict):
@@ -105,9 +106,10 @@ class Core:
                 async with session.get('http://127.0.0.1:9090/version',
                                        headers={'Authorization': 'Bearer ' + self.state.data['api_secret']}) as response:
                     if response.status == 200:
-                        print('Mihomo ready on ARM64.', flush=True)
-                        return
-            except (OSError, asyncio.TimeoutError):
+                        async with session.ws_connect('http://127.0.0.1:7891/tunnel'):
+                            print('Mihomo ready on ARM64.', flush=True)
+                            return
+            except (OSError, aiohttp.ClientError, asyncio.TimeoutError):
                 pass
             await asyncio.sleep(0.2)
         await self.stop()
@@ -126,7 +128,6 @@ class Core:
         async with self.lock:
             runtime = normalize(text, self.state.data)
             await self.validate(runtime)
-            old_text = self.source_text()
             old_runtime = self.runtime.read_text()
             await self.stop()
             atomic_write(self.runtime, runtime)
