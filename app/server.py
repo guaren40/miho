@@ -13,7 +13,7 @@ import yaml
 from yarl import URL
 from .core import MAX_CONFIG
 from .subscriptions import load_subscriptions, parse_urls
-from .proxy import proxy_uri
+from .proxy import public_certificate, proxy_uri
 
 STATIC = Path(__file__).resolve().parent.parent / 'static'
 UI = Path(os.getenv('ZASHBOARD_DIR', '/opt/zashboard'))
@@ -162,7 +162,7 @@ def create_app(state, core):
     async def proxy_certificate(request):
         if not core.proxy_tls:
             raise web.HTTPNotFound()
-        return web.Response(body=Path(core.proxy_tls['certificate']).read_bytes(),
+        return web.Response(body=public_certificate(core.proxy_tls['certificate']),
                             content_type='application/x-pem-file',
                             headers={'Content-Disposition': 'attachment; filename="miho-proxy.crt"'})
 

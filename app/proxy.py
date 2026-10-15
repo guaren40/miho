@@ -48,6 +48,15 @@ def certificate_host():
         return host
 
 
+def public_certificate(path):
+    # Custom PEM bundles sometimes contain both the chain and the private key.
+    certificates = re.findall(rb'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----',
+                              Path(path).read_bytes(), re.DOTALL)
+    if not certificates:
+        raise ValueError('代理证书中没有公开证书')
+    return b'\n'.join(certificates) + b'\n'
+
+
 async def prepare_proxy_tls(directory):
     proxy_endpoint('http')
     proxy_endpoint('https')

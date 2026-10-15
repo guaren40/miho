@@ -154,10 +154,11 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(info['http_proxy_uri'], 'http://' + auth + '@proxy.example:30001')
         self.assertEqual(info['https_proxy_uri'], 'https://' + auth + '@proxy.example:30002')
         certificate = Path(self.temp.name) / 'proxy.crt'
-        certificate.write_text('public certificate only')
+        public = '-----BEGIN CERTIFICATE-----\nPUBLIC\n-----END CERTIFICATE-----\n'
+        certificate.write_text(public + '-----BEGIN PRIVATE KEY-----\nSECRET\n-----END PRIVATE KEY-----\n')
         self.core.proxy_tls = {'certificate': str(certificate), 'private-key': '/secret', 'self_signed': True}
         response = await self.client.get('/manage/proxy.crt')
-        self.assertEqual(await response.text(), 'public certificate only')
+        self.assertEqual(await response.text(), public)
         self.assertEqual(response.headers['Cache-Control'], 'no-store')
         self.assertEqual((await self.client.get('/manage/proxy.key')).status, 404)
 
