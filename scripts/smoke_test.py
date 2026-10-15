@@ -139,6 +139,9 @@ async def test():
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch()
                 page = await browser.new_page(viewport={'width': 1440, 'height': 1000})
+                page.on('pageerror', lambda error: print('Browser error:', error))
+                page.on('response', lambda response: print('HTTP error:', response.status, response.url)
+                        if response.status >= 400 and response.url.startswith(base) else None)
                 await page.goto(base)
                 await page.locator('#password').fill(PASSWORD)
                 await page.locator('#login-form button').click()
@@ -146,7 +149,15 @@ async def test():
                 await page.locator('#open-dashboard').click()
                 await page.screenshot(path='test-results/console.png', full_page=True)
                 frame = page.frame_locator('#dashboard-frame')
-                await frame.get_by_text('测试策略', exact=True).first.wait_for(timeout=60000)
+                try:
+                    await frame.get_by_text('测试策略', exact=True).first.wait_for(timeout=60000)
+                except Exception:
+                    await page.screenshot(path='test-results/console.png', full_page=True)
+                    for child in page.frames:
+                        print('Frame URL:', child.url)
+                        if child.parent_frame:
+                            print('Frame text:', (await child.locator('body').inner_text())[:2500])
+                    raise
                 await page.screenshot(path='test-results/console.png', full_page=True)
                 await page.locator('[data-tab="config"]').click()
                 await page.locator('#yaml').fill('proxy-groups:\n  - name: 浏览器策略\n    type: select\n    proxies: [DIRECT]\nrules:\n  - MATCH,浏览器策略\n')

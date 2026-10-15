@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 from aiohttp import web, WSMsgType
 from aiohttp.test_utils import TestClient, TestServer
@@ -86,6 +87,9 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             return ws
         upstream.router.add_get('/version', version)
         upstream.router.add_get('/traffic', traffic)
+        async def proxy_name(request):
+            return web.json_response({'name': request.match_info['name']})
+        upstream.router.add_get('/proxies/{name}', proxy_name)
         self.upstream = TestServer(upstream, port=9090)
         await self.upstream.start_server()
         self.client = TestClient(TestServer(create_app(self.state, FakeCore())))
@@ -117,7 +121,8 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get('/dashboard', allow_redirects=False)
         self.assertEqual(response.status, 302)
         location = response.headers['Location']
-        self.assertIn('secondaryPath=api', location)
+        query = parse_qs(urlsplit(location).fragment.partition('?')[2])
+        self.assertEqual(query['secondaryPath'], ['/api'])
         self.assertIn('disableTunMode=1', location)
         self.assertNotIn(self.state.data['api_secret'], location)
         response = await self.client.get('/manage/client.yaml')
@@ -135,3 +140,11 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
     async def test_api_token_for_native_controllers(self):
         response = await self.client.get('/api/version', headers={'Authorization': 'Bearer ' + self.state.data['api_secret']})
         self.assertEqual(response.status, 200)
+
+    async def test_encoded_node_names_and_managed_endpoint_paths(self):
+        await self.login()
+        response = await self.client.get('/api/proxies/Region%2FNode')
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())['name'], 'Region/Node')
+        self.assertEqual((await self.client.patch('/api/configs/', json={'secret': ''})).status, 400)
+        self.assertEqual((await self.client.patch('/api//configs', json={'secret': ''})).status, 400)

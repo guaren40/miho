@@ -6,10 +6,11 @@ import json
 import os
 from pathlib import Path
 import time
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import urlencode, urlsplit
 import aiohttp
 from aiohttp import web
 import yaml
+from yarl import URL
 from .core import MAX_CONFIG
 
 STATIC = Path(__file__).resolve().parent.parent / 'static'
@@ -202,7 +203,7 @@ def create_app(state, core):
         parsed = urlsplit(public_url(request))
         query = urlencode({'protocol': parsed.scheme, 'hostname': parsed.hostname,
                            'port': parsed.port or (443 if parsed.scheme == 'https' else 80),
-                           'secondaryPath': 'api', 'disableUpgradeCore': '1', 'disableTunMode': '1', 'label': 'Miho'})
+                           'secondaryPath': '/api', 'disableUpgradeCore': '1', 'disableTunMode': '1', 'label': 'Miho'})
         raise web.HTTPFound('/ui/#/setup?' + query)
 
     async def ui(request):
@@ -214,9 +215,13 @@ def create_app(state, core):
 
     async def api(request):
         path = request.match_info['path']
-        if path.split('/')[0] in ('upgrade', 'restart'):
+        if any(part in ('.', '..') for part in path.split('/')) or '\\' in path:
+            raise ValueError('无效的控制器路径')
+        # Canonicalize for access checks, but preserve encoded slashes in node names.
+        checked_path = '/'.join(part for part in path.split('/') if part)
+        if checked_path.split('/')[0] in ('upgrade', 'restart'):
             return web.json_response({'message': '请通过重新部署 ARM64 镜像更新或重启'}, status=403)
-        if path == 'configs' and request.method == 'PUT':
+        if checked_path == 'configs' and request.method == 'PUT':
             body = await request.json()
             if body.get('path'):
                 raise ValueError('请在 Miho 配置页导入配置，不支持任意文件路径')
@@ -225,11 +230,14 @@ def create_app(state, core):
                 raise ValueError('payload 必须是 YAML 文本')
             await core.apply(text, app['client'])
             return web.Response(status=204)
-        if path == 'configs' and request.method == 'PATCH':
+        if checked_path == 'configs' and request.method == 'PATCH':
             body = await request.json()
             if not isinstance(body, dict) or set(body) - {'mode', 'log-level', 'ipv6', 'unified-delay', 'tcp-concurrent'}:
                 raise ValueError('端口、认证与监听地址由 Miho 管理；请在配置页修改其他设置')
-        target = 'http://127.0.0.1:9090/' + quote(path, safe='/')
+        raw_path = request.rel_url.raw_path
+        if not raw_path.startswith('/api/'):
+            raise ValueError('无效的控制器路径')
+        target = URL('http://127.0.0.1:9090/' + raw_path[len('/api/'):], encoded=True)
         query = [(key, value) for key, value in request.query.items() if key != 'token']
         headers = {key: value for key, value in request.headers.items() if key.lower() not in HOP}
         headers.update(core_headers())
@@ -238,9 +246,11 @@ def create_app(state, core):
                                                  max_msg_size=8 * 1024 * 1024) as upstream:
                 return await bridge(request, upstream)
         async with app['client'].request(request.method, target, params=query, headers=headers,
-                                          data=await request.read(), auto_decompress=False) as upstream:
+                                          data=await request.read(), auto_decompress=False, allow_redirects=False) as upstream:
             response = web.StreamResponse(status=upstream.status,
                                           headers={key: value for key, value in upstream.headers.items() if key.lower() not in HOP and key.lower() != 'set-cookie'})
+            response.headers['Cache-Control'] = 'no-store'
+            response.headers['X-Content-Type-Options'] = 'nosniff'
             await response.prepare(request)
             async for chunk in upstream.content.iter_chunked(65536):
                 await response.write(chunk)
