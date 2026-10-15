@@ -1,0 +1,14 @@
+**
+!app/
+!app/**
+!static/
+!static/**
+!scripts/
+!scripts/fetch_upstream.py
+!scripts/entrypoint.sh
+!requirements.txt
+!versions.json
+!LICENSE
+!licenses/
+!licenses/**
+

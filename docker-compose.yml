@@ -1,0 +1,16 @@
+services:
+  miho:
+    build: .
+    platform: linux/arm64
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+      # Optional authenticated HTTP/SOCKS5 access on the host only.
+      - "127.0.0.1:7890:7890"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+    volumes:
+      - miho-data:/data
+volumes:
+  miho-data:

@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=https://schema.zeabur.app/template.json
+apiVersion: zeabur.com/v1
+kind: Template
+metadata:
+  name: Miho ARM64
+spec:
+  description: Mihomo + Zashboard with a shared HTTPS/WebSocket entrance, for ARM64 servers.
+  tags:
+    - Tool
+  variables:
+    - key: PUBLIC_DOMAIN
+      type: DOMAIN
+      name: Panel domain
+      description: HTTPS domain for the panel and VLESS-over-WebSocket clients.
+  readme: |-
+    # Miho ARM64
+    Deploy this template to an ARM64 server. The configuration and credentials
+    are initialized automatically and persisted in /data. Open the assigned
+    domain and sign in with ADMIN_PASSWORD (shown in the service variables).
+    Import a Clash/Mihomo subscription if needed, then copy the VLESS link or
+    download the client YAML. No extra public TCP port is required.
+  services:
+    - name: miho
+      template: GIT
+      domainKey: PUBLIC_DOMAIN
+      spec:
+        source:
+          type: GITHUB
+          repoID: 1420458178
+          branch: main
+        ports:
+          - id: web
+            port: 8000
+            type: HTTP
+        volumes:
+          - id: data
+            dir: /data
+        env:
+          ADMIN_PASSWORD:
+            default: ${PASSWORD}
+          PORT:
+            default: "8000"
+          PUBLIC_URL:
+            default: https://${PUBLIC_DOMAIN}
+        instructions:
+          - type: DOMAIN
+            title: Open Miho
+            content: https://${PUBLIC_DOMAIN}
+          - type: PASSWORD
+            title: Initial admin password
+            content: ${ADMIN_PASSWORD}
+localization:
+  zh-CN:
+    description: ARM64 专用 Mihomo + Zashboard，面板与代理共用 HTTPS 域名，自动初始化配置。
+    variables:
+      - key: PUBLIC_DOMAIN
+        name: 面板域名
+        description: 面板与 VLESS WebSocket 连接共同使用的 HTTPS 域名。
+    readme: |-
+      # Miho ARM64
+      请部署到 ARM64 服务器。配置与凭据自动生成，并持久化到 /data。
+      打开分配的域名，使用服务变量中的 ADMIN_PASSWORD 登录。
+      可导入自己的 Clash/Mihomo 订阅，随后复制 VLESS 链接或下载客户端 YAML。
+      不需要额外开放公网 TCP 端口，也不需要手动挂载 config.yaml。

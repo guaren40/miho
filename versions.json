@@ -1,0 +1,13 @@
+{
+  "mihomo": {
+    "version": "v1.19.32",
+    "url": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-linux-arm64-v1.19.32.gz",
+    "sha256": "9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0"
+  },
+  "zashboard": {
+    "version": "v3.29.1",
+    "url": "https://github.com/Zephyruso/zashboard/releases/download/v3.29.1/dist.zip",
+    "sha256": "4f16cce229e223bd07b5a3daccfbfb8bf349d7335572d412959284ab6c9bab50"
+  }
+}
+
