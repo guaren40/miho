@@ -38,12 +38,14 @@ async function load() {
 }
 async function apply(button, action) {
   const text = button.textContent;
+  $('toast').hidden = true;
   button.disabled = true;
   button.textContent = '检查与应用中…';
   try {
     await action();
     await load();
     $('dashboard-frame').removeAttribute('src');
+    if ($('dashboard').classList.contains('active')) $('dashboard-frame').src = '/dashboard';
     toast('配置已生效');
   } catch (error) { toast(error.message, true); }
   finally { button.disabled = false; button.textContent = text; }
