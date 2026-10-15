@@ -26,7 +26,7 @@ def docker(*arguments, check=True):
 def start(password=PASSWORD):
     docker('run', '-d', '--name', NAME, '--add-host', 'host.docker.internal:host-gateway',
            '-p', '127.0.0.1::8000', '-p', '127.0.0.1::7890', '-v', VOLUME + ':/data',
-           '-e', 'ZEABUR=1', '-e', 'PASSWORD=' + password, IMAGE)
+           '-e', 'ZEABUR=1', '-e', 'MIHO_DEBUG=1', '-e', 'PASSWORD=' + password, IMAGE)
     web_port = docker('port', NAME, '8000/tcp').rsplit(':', 1)[1]
     proxy_port = docker('port', NAME, '7890/tcp').rsplit(':', 1)[1]
     return 'http://127.0.0.1:' + web_port, 'http://127.0.0.1:' + proxy_port
@@ -50,16 +50,17 @@ async def test():
     assert docker('run', '--rm', '--entrypoint', 'uname', IMAGE, '-m') == 'aarch64'
     fixture = web.Application()
     fixture.router.add_get('/marker', lambda _: web.Response(text=MARKER))
-    fixture.router.add_get('/subscription', lambda _: web.Response(text='proxy-groups:\n  - name: 测试策略\n    type: select\n    proxies: [DIRECT]\nrules: [MATCH,测试策略]\n'))
+    fixture.router.add_get('/subscription', lambda _: web.Response(text='proxy-groups:\n  - name: 测试策略\n    type: select\n    proxies: [DIRECT]\nrules:\n  - MATCH,测试策略\n'))
     runner = web.AppRunner(fixture)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', 0)
     await site.start()
     fixture_port = site._server.sockets[0].getsockname()[1]
-    target = f'http://host.docker.internal:{fixture_port}/marker'
     docker('rm', '-f', NAME, check=False)
     docker('volume', 'rm', '-f', VOLUME, check=False)
     base, proxy = start()
+    gateway = docker('exec', NAME, 'python', '-c', 'import socket; print(socket.gethostbyname("host.docker.internal"))')
+    target = f'http://{gateway}:{fixture_port}/marker'
     async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)) as session:
         await ready(session, base)
         assert (await session.get(base + '/manage/info')).status == 401
@@ -77,7 +78,7 @@ async def test():
         docker('exec', NAME, 'python', '-c', "from pathlib import Path; import sys; Path('/data/client-test.yaml').write_text(sys.argv[1])", export)
         docker('exec', NAME, 'mihomo', '-t', '-d', '/data', '-f', '/data/client-test.yaml')
         # A complete VLESS request: v0, UUID, no addons, TCP, port, domain, payload.
-        host = b'host.docker.internal'
+        host = gateway.encode()
         header = b'\x00' + uuid.UUID(node['uuid']).bytes + b'\x00\x01' + fixture_port.to_bytes(2, 'big') + b'\x02' + bytes([len(host)]) + host
         request = f'GET /marker HTTP/1.1\r\nHost: host.docker.internal:{fixture_port}\r\nConnection: close\r\n\r\n'.encode()
         async with session.ws_connect(base + '/tunnel') as ws:
@@ -143,11 +144,12 @@ async def test():
                 await page.locator('#login-form button').click()
                 await page.locator('#console').wait_for(state='visible')
                 await page.locator('#open-dashboard').click()
+                await page.screenshot(path='test-results/console.png', full_page=True)
                 frame = page.frame_locator('#dashboard-frame')
                 await frame.get_by_text('测试策略', exact=True).first.wait_for(timeout=60000)
                 await page.screenshot(path='test-results/console.png', full_page=True)
                 await page.locator('[data-tab="config"]').click()
-                await page.locator('#yaml').fill('proxy-groups:\n  - name: 浏览器策略\n    type: select\n    proxies: [DIRECT]\nrules: [MATCH,浏览器策略]\n')
+                await page.locator('#yaml').fill('proxy-groups:\n  - name: 浏览器策略\n    type: select\n    proxies: [DIRECT]\nrules:\n  - MATCH,浏览器策略\n')
                 await page.locator('#yaml-form button').click()
                 await page.get_by_text('配置已生效', exact=True).wait_for(timeout=60000)
                 await page.locator('[data-tab="dashboard"]').click()

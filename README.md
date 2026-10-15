@@ -26,7 +26,7 @@
 npx zeabur@latest template deploy -f zeabur-template.yaml
 ```
 
-按 CLI 提示登录、选择 ARM64 项目并设置域名。此文件可通过你自己的 Zeabur 账户发布为一键部署模板；仓库不会伪造未发布的模板按钮。
+按 CLI 提示登录、选择 ARM64 项目并设置域名。此文件也可通过你自己的 Zeabur 账户发布为一键部署模板。
 
 Zeabur 的 Git 服务只提供一个 HTTP 公网入口，因此这里通过 **`/tunnel` 上的 VLESS-over-WebSocket** 提供客户端连接，HTTPS 由 Zeabur 终止。无需额外 TCP 端口。此方案不是操作系统 VPN，也不会修改 VPS 的系统路由。
 
@@ -54,6 +54,7 @@ docker compose logs miho
 | `PUBLIC_URL` | 可选，公开的完整地址，例如 `https://miho.example.com` |
 | `PORT` | HTTP 监听端口，默认 `8000` |
 | `DATA_DIR` | 持久化目录，默认 `/data` |
+| `MIHO_DEBUG` | 设为 `1` 时将 Mihomo 诊断日志写入容器日志，用于排查连接问题 |
 
 已存在 `/data/state.json` 时不会因环境变量改变而重置密码或 UUID。需要重设管理密码时，可停机后备份并删除此文件，再使用新的 `ADMIN_PASSWORD` 启动；这也会更换代理密码、API 令牌和 VLESS UUID，需要重新导出客户端配置。
 

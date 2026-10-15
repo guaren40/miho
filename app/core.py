@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import os
 from pathlib import Path
 import aiohttp
 import yaml
@@ -98,7 +99,8 @@ class Core:
     async def launch(self, session):
         self.process = await asyncio.create_subprocess_exec(
             '/usr/local/bin/mihomo', '-d', str(self.directory), '-f', str(self.runtime),
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            stdout=None if os.getenv('MIHO_DEBUG') == '1' else asyncio.subprocess.DEVNULL,
+            stderr=None if os.getenv('MIHO_DEBUG') == '1' else asyncio.subprocess.DEVNULL)
         for _ in range(150):
             if self.process.returncode is not None:
                 raise RuntimeError('Mihomo exited while starting; check the saved configuration')
