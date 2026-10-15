@@ -5,11 +5,14 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
-      # Optional authenticated HTTP/SOCKS5 access on the host only.
-      - "127.0.0.1:7890:7890"
+      # Set MIHO_PROXY_BIND=0.0.0.0 to allow remote HTTP(S) proxy clients.
+      - "${MIHO_PROXY_BIND:-127.0.0.1}:7890:7890"
+      - "${MIHO_PROXY_BIND:-127.0.0.1}:7892:7892"
     environment:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       PUBLIC_URL: ${PUBLIC_URL:-}
+      MIHO_HTTP_PROXY_URL: ${MIHO_HTTP_PROXY_URL:-http://localhost:7890}
+      MIHO_HTTPS_PROXY_URL: ${MIHO_HTTPS_PROXY_URL:-https://localhost:7892}
     volumes:
       - miho-data:/data
 volumes:

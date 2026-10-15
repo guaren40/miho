@@ -5,11 +5,12 @@ from pathlib import Path
 import aiohttp
 import yaml
 from .state import atomic_write
+from .proxy import prepare_proxy_tls
 
 MAX_CONFIG = 5 * 1024 * 1024
 
 
-def normalize(text, state):
+def normalize(text, state, proxy_tls=None):
     if len(text.encode()) > MAX_CONFIG:
         raise ValueError('配置超过 5 MiB')
     try:
@@ -36,6 +37,12 @@ def normalize(text, state):
                        # TLS terminates at Zeabur / the reverse proxy. This listener is loopback only.
                        'allow-insecure': True, 'ws-path': '/tunnel'}],
     })
+    if proxy_tls:
+        config['listeners'].append({
+            'name': 'miho-https', 'type': 'http', 'listen': '0.0.0.0', 'port': 7892,
+            'users': [{'username': state['proxy_user'], 'password': state['proxy_password']}],
+            'certificate': proxy_tls['certificate'], 'private-key': proxy_tls['private-key'],
+        })
     profile = config.get('profile') or {}
     if not isinstance(profile, dict):
         raise ValueError('profile 必须是对象')
@@ -69,6 +76,7 @@ class Core:
         self.reader = None
         self.lock = asyncio.Lock()
         self.stopping = False
+        self.proxy_tls = None
 
     def source_text(self):
         return self.source.read_text() if self.source.exists() else ''
@@ -93,7 +101,8 @@ class Core:
             path.unlink(missing_ok=True)
 
     async def start(self, session):
-        atomic_write(self.runtime, normalize(self.source_text(), self.state.data))
+        self.proxy_tls = await prepare_proxy_tls(self.directory)
+        atomic_write(self.runtime, normalize(self.source_text(), self.state.data, self.proxy_tls))
         await self.launch(session)
 
     async def launch(self, session):
@@ -128,7 +137,7 @@ class Core:
 
     async def apply(self, text, session, subscription_url=None, subscription_urls=None):
         async with self.lock:
-            runtime = normalize(text, self.state.data)
+            runtime = normalize(text, self.state.data, self.proxy_tls)
             await self.validate(runtime)
             old_runtime = self.runtime.read_text()
             await self.stop()

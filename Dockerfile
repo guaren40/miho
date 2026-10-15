@@ -5,7 +5,7 @@ RUN test "$(apk --print-arch)" = aarch64 && python fetch_upstream.py /out
 
 FROM --platform=linux/arm64 python:3.13-alpine
 RUN test "$(apk --print-arch)" = aarch64 && \
-    apk add --no-cache ca-certificates su-exec tini && \
+    apk add --no-cache ca-certificates openssl su-exec tini && \
     addgroup -S -g 10001 miho && \
     adduser -S -D -H -u 10001 -G miho miho && \
     mkdir -p /data && chown miho:miho /data

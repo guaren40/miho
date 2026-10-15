@@ -4,7 +4,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import ssl
 import sys
+import tempfile
 import time
 import uuid
 import aiohttp
@@ -25,7 +27,9 @@ def docker(*arguments, check=True):
 
 def start(password=PASSWORD):
     docker('run', '-d', '--name', NAME, '--add-host', 'host.docker.internal:host-gateway',
-           '-p', '127.0.0.1::8000', '-p', '127.0.0.1::7890', '-v', VOLUME + ':/data',
+           '-p', '127.0.0.1::8000', '-p', '127.0.0.1:17890:7890', '-p', '127.0.0.1:17892:7892',
+           '-v', VOLUME + ':/data', '-e', 'MIHO_HTTP_PROXY_URL=http://127.0.0.1:17890',
+           '-e', 'MIHO_HTTPS_PROXY_URL=https://127.0.0.1:17892',
            '-e', 'ZEABUR=1', '-e', 'MIHO_DEBUG=1', '-e', 'PASSWORD=' + password, IMAGE)
     web_port = docker('port', NAME, '8000/tcp').rsplit(':', 1)[1]
     proxy_port = docker('port', NAME, '7890/tcp').rsplit(':', 1)[1]
@@ -63,6 +67,20 @@ async def test():
     site = web.TCPSite(runner, '0.0.0.0', 0)
     await site.start()
     fixture_port = site._server.sockets[0].getsockname()[1]
+    # A second fixture checks CONNECT end to end, including TLS inside a TLS proxy.
+    fixture_directory = tempfile.TemporaryDirectory()
+    fixture_cert = Path(fixture_directory.name) / 'target.crt'
+    fixture_key = Path(fixture_directory.name) / 'target.key'
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
+                    '-nodes', '-days', '1', '-subj', '/CN=host.docker.internal',
+                    '-addext', 'subjectAltName=DNS:host.docker.internal',
+                    '-keyout', str(fixture_key), '-out', str(fixture_cert)],
+                   check=True, capture_output=True)
+    fixture_tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    fixture_tls.load_cert_chain(fixture_cert, fixture_key)
+    tls_site = web.TCPSite(runner, '0.0.0.0', 0, ssl_context=fixture_tls)
+    await tls_site.start()
+    tls_port = tls_site._server.sockets[0].getsockname()[1]
     docker('rm', '-f', NAME, check=False)
     docker('volume', 'rm', '-f', VOLUME, check=False)
     base, proxy = start()
@@ -72,6 +90,7 @@ async def test():
         await ready(session, base)
         assert (await session.get(base + '/manage/info')).status == 401
         assert (await session.get(base + '/api/version')).status == 401
+        assert (await session.get(base + '/manage/proxy.crt')).status == 401
         assert (await session.post(base + '/manage/login', json={'password': 'wrong'})).status == 401
         assert (await session.post(base + '/manage/login', json={'password': PASSWORD})).status == 200
         info = await (await session.get(base + '/manage/info')).json()
@@ -113,6 +132,34 @@ async def test():
         async with session.get(target, proxy=proxy, proxy_auth=aiohttp.BasicAuth(info['proxy_user'], info['proxy_password'])) as response:
             assert MARKER in await response.text()
         print('HTTP proxy authentication and traffic: passed.')
+        proxy_cert = await (await session.get(base + '/manage/proxy.crt')).read()
+        proxy_ca = Path(fixture_directory.name) / 'proxy.crt'
+        proxy_ca.write_bytes(proxy_cert)
+        assert info['http_proxy_uri'].startswith('http://miho:') and info['http_proxy_uri'].endswith('@127.0.0.1:17890')
+        assert info['https_proxy_uri'].startswith('https://miho:') and info['https_proxy_uri'].endswith('@127.0.0.1:17892')
+        assert info['https_proxy_self_signed']
+
+        async def curl_proxy(uri, url, trust=True):
+            arguments = ['curl', '--silent', '--show-error', '--fail', '--max-time', '15', '--noproxy', '',
+                         '--proxy', uri, '--cacert', str(fixture_cert)]
+            if trust:
+                arguments += ['--proxy-cacert', str(proxy_ca)]
+            process = await asyncio.create_subprocess_exec(*arguments, url, stdout=asyncio.subprocess.PIPE,
+                                                           stderr=asyncio.subprocess.PIPE)
+            output, _ = await process.communicate()
+            return process.returncode, output
+
+        https_target = f'https://host.docker.internal:{tls_port}/marker'
+        for uri in (info['http_proxy_uri'], info['https_proxy_uri']):
+            for url in (target, https_target):
+                code, output = await curl_proxy(uri, url)
+                assert code == 0 and MARKER.encode() in output, (code, output)
+        # TLS verification remains on; an untrusted certificate and bad credentials fail.
+        assert (await curl_proxy(info['https_proxy_uri'], https_target, trust=False))[0] != 0
+        bad_uri = info['https_proxy_uri'].replace(info['proxy_password'], 'wrong-password')
+        assert (await curl_proxy(bad_uri, https_target))[0] != 0
+        assert (await session.get(base + '/manage/proxy.key')).status == 404
+        print('Exported HTTP/HTTPS links: real HTTP and HTTPS CONNECT traffic, TLS trust and authentication passed.')
         # Real core validates URL imports and protects the previous configuration.
         response = await session.post(base + '/manage/config', json={'url': f'http://host.docker.internal:{fixture_port}/subscription'})
         assert response.status == 200, await response.text()
@@ -155,6 +202,9 @@ async def test():
                 assert restored[key] == info[key]
         assert await (await session.get(base + '/manage/config')).json() == saved
         assert restored['subscription_urls'] == source_urls
+        assert await (await session.get(base + '/manage/proxy.crt')).read() == proxy_cert
+        assert restored['http_proxy_uri'] == info['http_proxy_uri']
+        assert restored['https_proxy_uri'] == info['https_proxy_uri']
         print('Import validation, rejected-config recovery and volume persistence: passed.')
         # Browser verification on a reachable persistent container.
         Path('/tmp/miho-test-url').write_text(base)
@@ -170,6 +220,14 @@ async def test():
                 await page.locator('#password').fill(PASSWORD)
                 await page.locator('#login-form button').click()
                 await page.locator('#console').wait_for(state='visible')
+                assert await page.locator('#http-proxy').input_value() == restored['http_proxy_uri']
+                assert await page.locator('#https-proxy').input_value() == restored['https_proxy_uri']
+                await page.context.grant_permissions(['clipboard-read', 'clipboard-write'])
+                await page.locator('#copy-http').click()
+                assert await page.evaluate('navigator.clipboard.readText()') == restored['http_proxy_uri']
+                await page.locator('#copy-https').click()
+                assert await page.evaluate('navigator.clipboard.readText()') == restored['https_proxy_uri']
+                await page.screenshot(path='test-results/proxy-links.png', full_page=True)
                 await page.locator('#open-dashboard').click()
                 await page.screenshot(path='test-results/console.png', full_page=True)
                 frame = page.frame_locator('#dashboard-frame')
@@ -197,6 +255,7 @@ async def test():
                 await browser.close()
                 print('Browser: login, dashboard automatic connection, multiple provider URLs and configuration import passed.')
     await runner.cleanup()
+    fixture_directory.cleanup()
 
 
 if __name__ == '__main__':

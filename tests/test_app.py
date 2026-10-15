@@ -56,6 +56,7 @@ class StateTests(unittest.TestCase):
 
 
 class FakeCore:
+    proxy_tls = None
     process = type('Process', (), {'returncode': None})()
     text = ''
     def __init__(self, state): self.state = state
@@ -142,6 +143,23 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             message = await ws.receive()
             self.assertEqual(message.type, WSMsgType.TEXT)
             self.assertEqual(json.loads(message.data)['up'], 42)
+
+    async def test_proxy_exports_and_certificate_require_login(self):
+        self.assertEqual((await self.client.get('/manage/proxy.crt')).status, 401)
+        await self.login()
+        with patch.dict(os.environ, {'MIHO_HTTP_PROXY_URL': 'http://proxy.example:30001',
+                                    'MIHO_HTTPS_PROXY_URL': 'https://proxy.example:30002'}):
+            info = await (await self.client.get('/manage/info')).json()
+        auth = self.state.data['proxy_user'] + ':' + self.state.data['proxy_password']
+        self.assertEqual(info['http_proxy_uri'], 'http://' + auth + '@proxy.example:30001')
+        self.assertEqual(info['https_proxy_uri'], 'https://' + auth + '@proxy.example:30002')
+        certificate = Path(self.temp.name) / 'proxy.crt'
+        certificate.write_text('public certificate only')
+        self.core.proxy_tls = {'certificate': str(certificate), 'private-key': '/secret', 'self_signed': True}
+        response = await self.client.get('/manage/proxy.crt')
+        self.assertEqual(await response.text(), 'public certificate only')
+        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        self.assertEqual((await self.client.get('/manage/proxy.key')).status, 404)
 
     async def test_api_token_for_native_controllers(self):
         response = await self.client.get('/api/version', headers={'Authorization': 'Bearer ' + self.state.data['api_secret']})

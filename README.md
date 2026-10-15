@@ -2,7 +2,7 @@
 
 [![ARM64 Docker verification](https://github.com/guaren40/miho/actions/workflows/docker.yml/badge.svg)](https://github.com/guaren40/miho/actions/workflows/docker.yml)
 
-**为 ARM64 VPS 准备的单容器整合：管理登录、订阅导入、Zashboard 和 VLESS WebSocket 代理共用一个入口。**
+**为 ARM64 VPS 准备的单容器整合：管理登录、订阅导入、Zashboard 和 VLESS WebSocket 共用一个入口，也支持生成对外 HTTP(S) 代理链接。**
 
 固定打包 Mihomo **v1.19.32** 和 Zashboard **v3.29.1**，构建时校验上游资源 SHA256。无需准备 `config.yaml`，不需要特权容器、TUN 或 `NET_ADMIN`。
 
@@ -58,7 +58,61 @@ docker compose logs miho
 
 访问 `http://服务器IP:8000`。生产环境建议通过 HTTPS 反向代理访问，并确保代理转发 WebSocket。如果反向代理后导出的连接地址不正确，设置 `PUBLIC_URL=https://你的域名`。
 
-可在 `.env` 设置首次初始化的 `ADMIN_PASSWORD`。不设置会生成随机密码。Compose 默认把混合代理 7890 映射到宿主机回环地址，访问时需使用管理页提供的独立代理用户名和密码。
+可在 `.env` 设置首次初始化的 `ADMIN_PASSWORD`。不设置会生成随机密码。Compose 默认把 HTTP / SOCKS5 7890 和 HTTPS 7892 映射到宿主机回环地址，访问时需使用管理页提供的独立代理用户名和密码。
+
+## 生成对外 HTTP(S) 代理链接
+
+登录后，在“概览与连接”中复制 **HTTP 链接**或 **HTTPS 链接**，格式分别是：
+
+```text
+http://miho:代理密码@公网主机:HTTP映射端口
+https://miho:代理密码@公网主机:HTTPS映射端口
+```
+
+HTTP 链接可以代理 HTTP 网站，也可以通过 CONNECT 访问 HTTPS 网站；HTTPS 链接额外加密客户端到代理服务器之间的连接。这里的链接用于外部软件连接这台 VPS，出口仍由 Mihomo 中的策略决定。客户端必须支持相应代理协议；HTTPS 代理不能作为普通网页打开。
+
+程序仅根据**明确配置的 TCP 公网地址**生成链接，不会将面板的 HTTPS 域名误当成标准代理。独立用户名、密码自动加入链接并进行 URL 编码；链接只在登录后提供。未配置公网地址时，对应复制按钮保持禁用。
+
+### 在 ARM64 VPS 直接使用 Docker Compose
+
+在 `.env` 中填写实际 VPS IP 或代理域名，然后执行 `docker compose up -d --build`：
+
+```dotenv
+MIHO_PROXY_BIND=0.0.0.0
+MIHO_HTTP_PROXY_URL=http://proxy.example.com:7890
+MIHO_HTTPS_PROXY_URL=https://proxy.example.com:7892
+```
+
+确保域名解析到 VPS、7890 和 7892 的 TCP 连接可达。默认 TLS 证书会自动生成并保存在 `/data`；HTTPS 链接的主机名会写入证书，修改此主机名并重新部署后会重新签发。保留 `/data` 且主机名不变时，代理密码与证书都会保留。
+
+从登录后的页面下载 `miho-proxy.crt`，让客户端信任它。例如 curl：
+
+```bash
+curl --proxy '复制的HTTP链接' https://example.com
+curl --proxy '复制的HTTPS链接' --proxy-cacert ./miho-proxy.crt https://example.com
+```
+
+也可挂载自己受信任的证书与私钥，并同时设置 `MIHO_PROXY_TLS_CERT`、`MIHO_PROXY_TLS_KEY` 为容器内文件路径。证书需匹配 HTTPS 代理的公网主机名，且进程用户 10001 必须可读取。代理证书下载接口不会返回私钥。
+
+### Zeabur 的标准 HTTP(S) 代理入口
+
+Zeabur 的 **Git 服务只支持一个公网 HTTP 入口**。直接从本仓库部署时，面板与 VLESS/WSS 可继续使用原 HTTPS 域名，但仅修改链接的协议前缀无法让该入口变成标准 HTTP(S) 代理。
+
+要在 Zeabur 向外提供标准 HTTP(S) 链接，需要将本镜像部署为支持多端口的 **Docker Image 服务**。可将本仓库构建并推送到自己的镜像仓库：
+
+```bash
+docker buildx build --platform linux/arm64 -t 你的镜像仓库/miho:latest --push .
+```
+
+在 Zeabur Docker 服务中设置以下端口，并保留 `/data` 存储：
+
+| 用途 | 容器端口 | Zeabur 端口类型 |
+| --- | --- | --- |
+| 管理与 VLESS/WSS | 8000 | HTTP |
+| HTTP / SOCKS5 代理 | 7890 | TCP |
+| HTTPS 代理 | 7892 | TCP |
+
+将分配的公网主机和端口分别填入 `MIHO_HTTP_PROXY_URL`、`MIHO_HTTPS_PROXY_URL` 后重新部署，即可在管理页复制包含认证信息的完整链接。**HTTPS 代理 7892 也必须使用 TCP 转发**，TLS 在 Mihomo 中终止。原 `zeabur-template.yaml` 仍用于 Git/WSS 部署，不会自动开放这两个 TCP 入口。
 
 ## 环境变量
 
@@ -70,6 +124,10 @@ docker compose logs miho
 | `PORT` | HTTP 监听端口，默认 `8000` |
 | `DATA_DIR` | 持久化目录，默认 `/data` |
 | `MIHO_DEBUG` | 设为 `1` 时将 Mihomo 诊断日志写入容器日志，用于排查连接问题 |
+| `MIHO_HTTP_PROXY_URL` | HTTP 代理公网 TCP 地址，例如 `http://proxy.example.com:30001`，不含凭据；留空不导出 HTTP 链接 |
+| `MIHO_HTTPS_PROXY_URL` | HTTPS 代理公网 TCP 地址，例如 `https://proxy.example.com:30002`，不含凭据；留空不导出 HTTPS 链接 |
+| `MIHO_PROXY_TLS_CERT` / `MIHO_PROXY_TLS_KEY` | 可选，自定义 HTTPS 代理证书与私钥的容器内路径，必须同时设置；默认自动生成自签名证书 |
+| `MIHO_PROXY_BIND` | 仅供 Compose 使用；默认 `127.0.0.1`，设为 `0.0.0.0` 向外映射两个代理端口 |
 
 已存在 `/data/state.json` 时不会因环境变量改变而重置密码或 UUID。需要重设管理密码时，可停机后备份并删除此文件，再使用新的 `ADMIN_PASSWORD` 启动；这也会更换代理密码、API 令牌和 VLESS UUID，需要重新导出客户端配置。
 
@@ -77,15 +135,15 @@ docker compose logs miho
 
 - **自动初始化**：配置文件与凭据自动创建；通过会话 Cookie 登录，Zashboard 自动连接 `/api`，无需手动填写控制器和密钥。
 - **订阅管理**：URL 下载、粘贴或上传 YAML，支持多个提供商 URL 与一键刷新全部来源。先用真实 Mihomo 检查，再切换配置；检查失败保持原配置，启动失败恢复原配置。
-- **代理出口**：客户端通过 VLESS WebSocket 接入；出口由导入配置中的规则和 Zashboard 选择的策略组决定。
+- **代理出口**：客户端通过 VLESS WebSocket、HTTP 或 HTTPS 代理接入；出口由导入配置中的规则和 Zashboard 选择的策略组决定。HTTP(S) 链接包含认证信息，可直接复制到支持对应协议的外部软件。
 - **独立凭据**：管理密码、混合代理认证、控制器令牌、VLESS UUID 分开生成。链接、客户端 YAML 和 API 令牌都只在登录后提供。
-- **受管理的监听**：导入配置不能取消认证或替换管理端口。内核控制器只监听 `127.0.0.1:9090`，WebSocket 入站只监听回环地址；混合 HTTP/SOCKS5 端口为 `7890`，始终要求认证。TUN 与额外入站被关闭。
+- **受管理的监听**：导入配置不能取消认证或替换管理端口。内核控制器只监听 `127.0.0.1:9090`，WebSocket 入站只监听回环地址；混合 HTTP/SOCKS5 端口为 `7890`，HTTPS 代理为 `7892`，均始终要求认证。TUN 与订阅中额外的入站被关闭。
 - **持久化**：`state.json` 保存凭据，`user.yaml` 保存导入或合并后的配置，`runtime.yaml` 为受管理的运行配置。策略选择由 Mihomo 缓存保存。面板对模式、日志等即时设置的调整需写入导入配置后才能跨重启保留。
 - **更新**：修改 `versions.json` 中的版本、资源地址和 SHA256 后重新构建。面板中的内核升级和任意路径重载被禁止，避免下载错误架构或绕过监听设置。
 
 ## 验证
 
-GitHub Actions 同时验证原生 ARM64 与 x86 共享构建器模拟场景，确认生成的镜像仍为 `linux/arm64`。容器测试覆盖空数据目录启动、登录、真实 VLESS/WebSocket 流量、HTTP 代理认证、控制器 WebSocket、配置检查失败保护和重新建容器后的数据保留。浏览器测试覆盖登录、Zashboard 自动连接和网页配置导入。
+GitHub Actions 同时验证原生 ARM64 与 x86 共享构建器模拟场景，确认生成的镜像仍为 `linux/arm64`。容器测试覆盖空数据目录启动、登录、真实 VLESS/WebSocket 流量、导出的 HTTP/HTTPS 链接访问 HTTP 与 HTTPS 网站、HTTPS 代理证书验证与错误凭据拒绝、控制器 WebSocket、配置检查失败保护和重新建容器后的数据保留。浏览器测试覆盖登录、代理链接复制、Zashboard 自动连接和网页配置导入。
 
 本地逻辑检查：
 

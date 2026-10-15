@@ -13,6 +13,7 @@ import yaml
 from yarl import URL
 from .core import MAX_CONFIG
 from .subscriptions import load_subscriptions, parse_urls
+from .proxy import proxy_uri
 
 STATIC = Path(__file__).resolve().parent.parent / 'static'
 UI = Path(os.getenv('ZASHBOARD_DIR', '/opt/zashboard'))
@@ -153,7 +154,17 @@ def create_app(state, core):
                                   'subscription_urls': state.subscription_urls,
                                   'public_url': public_url(request), 'vless_uri': uri,
                                   'proxy_user': state.data['proxy_user'], 'proxy_password': state.data['proxy_password'],
+                                  'http_proxy_uri': proxy_uri('http', state.data),
+                                  'https_proxy_uri': proxy_uri('https', state.data),
+                                  'https_proxy_self_signed': bool(core.proxy_tls and core.proxy_tls['self_signed']),
                                   'api_token': state.data['api_secret'], 'status': 'ready' if core.process and core.process.returncode is None else 'starting'})
+
+    async def proxy_certificate(request):
+        if not core.proxy_tls:
+            raise web.HTTPNotFound()
+        return web.Response(body=Path(core.proxy_tls['certificate']).read_bytes(),
+                            content_type='application/x-pem-file',
+                            headers={'Content-Disposition': 'attachment; filename="miho-proxy.crt"'})
 
     async def download_subscription(url):
         parsed = urlsplit(url)
@@ -297,6 +308,7 @@ def create_app(state, core):
     app.router.add_post('/manage/login', login)
     app.router.add_post('/manage/logout', logout)
     app.router.add_get('/manage/info', info)
+    app.router.add_get('/manage/proxy.crt', proxy_certificate)
     app.router.add_route('*', '/manage/config', config)
     app.router.add_post('/manage/refresh', refresh)
     app.router.add_get('/manage/client.yaml', client_config)

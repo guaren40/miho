@@ -28,6 +28,14 @@ async function load() {
   $('proxy-user').value = details.proxy_user;
   $('proxy-password').value = details.proxy_password;
   $('api-token').value = details.api_token;
+  $('http-proxy').value = details.http_proxy_uri;
+  $('https-proxy').value = details.https_proxy_uri;
+  $('copy-http').disabled = !details.http_proxy_uri;
+  $('copy-https').disabled = !details.https_proxy_uri;
+  $('proxy-hint').textContent = (details.https_proxy_self_signed
+    ? 'HTTPS 代理使用自动生成的自签名证书，客户端需信任下载的代理证书。'
+    : 'HTTPS 代理使用自定义证书，请确保客户端信任其签发机构。')
+    + ' HTTP(S) 链接仅在配置实际公网 TCP 地址后生成；管理页登录密码不用于代理认证。';
   $('api-url').textContent = details.public_url + '/api';
   $('subscription').value = (details.subscription_urls || (details.subscription_url ? [details.subscription_url] : [])).join('\n');
   $('core-version').textContent = details.versions.mihomo.version;
@@ -66,12 +74,18 @@ $('logout').onclick = async () => { await api('/manage/logout', { method: 'POST'
 document.querySelectorAll('[data-tab]').forEach(el => { el.onclick = () => tab(el.dataset.tab); });
 document.querySelectorAll('[data-go]').forEach(el => { el.onclick = () => tab(el.dataset.go); });
 $('open-dashboard').onclick = () => tab('dashboard');
-$('copy-vless').onclick = async () => {
-  try { await navigator.clipboard.writeText($('vless').value); toast('连接链接已复制'); }
-  catch { $('vless').select(); toast('请复制选中的链接'); }
-};
+for (const [button, field] of [['copy-vless', 'vless'], ['copy-http', 'http-proxy'], ['copy-https', 'https-proxy']]) {
+  $(button).onclick = async () => {
+    try { await navigator.clipboard.writeText($(field).value); toast('连接链接已复制'); }
+    catch {
+      if ($(field).tagName === 'INPUT') $(field).type = 'text';
+      $(field).select();
+      toast('请复制选中的链接');
+    }
+  };
+}
 $('show-secrets').onclick = () => {
-  for (const id of ['proxy-password', 'api-token']) $(id).type = $(id).type === 'password' ? 'text' : 'password';
+  for (const id of ['proxy-password', 'api-token', 'http-proxy', 'https-proxy']) $(id).type = $(id).type === 'password' ? 'text' : 'password';
 };
 $('url-form').addEventListener('submit', (event) => {
   event.preventDefault();
